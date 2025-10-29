@@ -71,6 +71,8 @@ type SnackbarState = {
   tone: 'success' | 'error';
 };
 
+type UserRole = 'admin' | 'formando';
+
 const navigationRoutes = [
   { key: 'finances', title: 'Financas', focusedIcon: 'cash' },
   { key: 'polls', title: 'Enquetes', focusedIcon: 'poll' },
@@ -113,16 +115,19 @@ type FinancesTabProps = {
   onAddParticipantPress: () => void;
   onImportPress: () => void;
   importing: boolean;
+  role: UserRole;
 };
 
 type PollsTabProps = {
   loading: boolean;
   poll: Poll | null;
+  role: UserRole;
 };
 
 type CommunicationTabProps = {
   loading: boolean;
   messages: CommunicationMessage[];
+  role: UserRole;
 };
 
 const getStatusChipStyle = (status: PaymentStatus) => ({
@@ -132,6 +137,7 @@ const getStatusChipStyle = (status: PaymentStatus) => ({
 export default function App() {
   const [index, setIndex] = useState(0);
   const [routes] = useState(navigationRoutes);
+  const [role, setRole] = useState<UserRole>('admin');
   const [financeSummary, setFinanceSummary] = useState<FinanceSummary | null>(null);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [poll, setPoll] = useState<Poll | null>(null);
@@ -312,6 +318,7 @@ export default function App() {
         case 'finances':
           return (
             <FinancesTab
+              role={role}
               loading={loading}
               financeSummary={financeSummary}
               participants={participants}
@@ -321,14 +328,14 @@ export default function App() {
             />
           );
         case 'polls':
-          return <PollsTab loading={loading} poll={poll} />;
+          return <PollsTab loading={loading} poll={poll} role={role} />;
         case 'communication':
-          return <CommunicationTab loading={loading} messages={messages} />;
+          return <CommunicationTab loading={loading} messages={messages} role={role} />;
         default:
           return null;
       }
     },
-    [financeSummary, handleImportSample, importing, loading, messages, participants, poll],
+    [financeSummary, handleImportSample, importing, loading, messages, participants, poll, role],
   );
 
   const snackbarStyle = snackbarState.tone === 'error' ? styles.snackbarError : styles.snackbarSuccess;
@@ -341,6 +348,16 @@ export default function App() {
           <Appbar.Content title="Forma Agil" subtitle="Painel da comissao" />
           <Appbar.Action icon="refresh" onPress={refreshAll} disabled={refreshing || loading} />
         </Appbar.Header>
+        <View style={styles.roleSwitcher}>
+          <SegmentedButtons
+            value={role}
+            onValueChange={(value) => setRole(value as UserRole)}
+            buttons={[
+              { value: 'admin', label: 'Administrador', icon: 'shield-account' },
+              { value: 'formando', label: 'Formando', icon: 'account-school' },
+            ]}
+          />
+        </View>
         <View style={styles.navigationContainer}>
           <BottomNavigation
             navigationState={{ index, routes }}
@@ -441,8 +458,42 @@ const FinancesTab: React.FC<FinancesTabProps> = ({
   onAddParticipantPress,
   onImportPress,
   importing,
+  role,
 }) => {
   const [expanded, setExpanded] = useState<string | undefined>();
+  const statusDistribution = participants.reduce<Record<PaymentStatus, number>>(
+    (acc, participant) => {
+      acc[participant.status] += 1;
+      return acc;
+    },
+    { Pago: 0, 'Em dia': 0, Atrasado: 0 },
+  );
+  const totalParticipants = participants.length;
+  const statusSummaries: Array<{
+    status: PaymentStatus;
+    label: string;
+    description: string;
+    icon: string;
+  }> = [
+    {
+      status: 'Pago',
+      label: 'Pagamentos finalizados',
+      description: 'Formandos que quitaram todas as parcelas',
+      icon: 'check-circle',
+    },
+    {
+      status: 'Em dia',
+      label: 'Pagamentos em dia',
+      description: 'Formandos que estao cumprindo o cronograma',
+      icon: 'clock-check',
+    },
+    {
+      status: 'Atrasado',
+      label: 'Pagamentos atrasados',
+      description: 'Formandos que precisam de atencao',
+      icon: 'alert-circle',
+    },
+  ];
 
   if (loading) {
     return (
@@ -460,8 +511,12 @@ const FinancesTab: React.FC<FinancesTabProps> = ({
       {financeSummary ? (
         <Card style={styles.card}>
           <Card.Title
-            title="Resumo financeiro"
-            subtitle={`Meta: ${formatCurrencyBRL(financeSummary.totalGoal)}`}
+            title={role === 'admin' ? 'Resumo financeiro' : 'Resumo geral da turma'}
+            subtitle={
+              role === 'admin'
+                ? `Meta: ${formatCurrencyBRL(financeSummary.totalGoal)}`
+                : `Meta coletiva: ${formatCurrencyBRL(financeSummary.totalGoal)}`
+            }
           />
           <Card.Content>
             <View style={styles.summaryGrid}>
@@ -513,130 +568,177 @@ const FinancesTab: React.FC<FinancesTabProps> = ({
               Atualizado em {financeSummary.lastUpdated}
             </Text>
             <Text variant="titleSmall" style={styles.sectionSpacing}>
-              Ultimas movimentacoes
+              {role === 'admin' ? 'Ultimas movimentacoes' : 'Atualizacoes recentes'}
             </Text>
-            {financeSummary.latestPayments.length === 0 ? (
-              <Text variant="bodyMedium">Nenhum pagamento registrado.</Text>
+            {role === 'admin' ? (
+              financeSummary.latestPayments.length === 0 ? (
+                <Text variant="bodyMedium">Nenhum pagamento registrado.</Text>
+              ) : (
+                financeSummary.latestPayments.map((entry) => {
+                  const details = [entry.note, entry.method ?? 'Metodo nao informado']
+                    .filter(Boolean)
+                    .join(' • ');
+                  return (
+                    <React.Fragment key={entry.id}>
+                      <List.Item
+                        title={`${entry.date} - ${entry.status}`}
+                        description={details}
+                        right={() => (
+                          <Text style={styles.amountText}>{formatCurrencyBRL(entry.amount)}</Text>
+                        )}
+                      />
+                      <Divider />
+                    </React.Fragment>
+                  );
+                })
+              )
             ) : (
-              financeSummary.latestPayments.map((entry) => {
-                const details = [entry.note, entry.method ?? 'Metodo nao informado']
-                  .filter(Boolean)
-                  .join(' • ');
-                return (
-                  <List.Item
-                    key={entry.id}
-                    title={`${entry.date} - ${entry.status}`}
-                    description={details}
-                    right={() => (
-                      <Text style={styles.amountText}>{formatCurrencyBRL(entry.amount)}</Text>
-                    )}
-                  />
-                );
-              })
+              <Text variant="bodyMedium">
+                Os dados consolidados sao atualizados pela comissao. Procure o admin para detalhes
+                individuais.
+              </Text>
             )}
           </Card.Content>
         </Card>
       ) : null}
 
-      <Card style={styles.card}>
-        <Card.Title title="Cadastro rapido" subtitle="Adicione novos formandos" />
-        <Card.Content>
-          <Button
-            mode="contained"
-            onPress={onAddParticipantPress}
-            style={styles.cardButton}
-            icon="account-plus"
-          >
-            Cadastrar formando
-          </Button>
-          <Button
-            mode="outlined"
-            onPress={onImportPress}
-            style={styles.cardButton}
-            icon="tray-arrow-down"
-            loading={importing}
-            disabled={importing}
-          >
-            Importar lista simulada
-          </Button>
-          <Text variant="bodySmall" style={styles.helperText}>
-            A importacao usa dados ficticios em memoria para simular a leitura de planilhas.
-          </Text>
-        </Card.Content>
-      </Card>
+      {role === 'admin' ? (
+        <>
+          <Card style={styles.card}>
+            <Card.Title title="Cadastro rapido" subtitle="Adicione novos formandos" />
+            <Card.Content>
+              <Button
+                mode="contained"
+                onPress={onAddParticipantPress}
+                style={styles.cardButton}
+                icon="account-plus"
+              >
+                Cadastrar formando
+              </Button>
+              <Button
+                mode="outlined"
+                onPress={onImportPress}
+                style={styles.cardButton}
+                icon="tray-arrow-down"
+                loading={importing}
+                disabled={importing}
+              >
+                Importar lista simulada
+              </Button>
+              <Text variant="bodySmall" style={styles.helperText}>
+                A importacao usa dados ficticios em memoria para simular a leitura de planilhas.
+              </Text>
+            </Card.Content>
+          </Card>
 
-      <Card style={styles.card}>
-        <Card.Title
-          title="Formandos e pagamentos"
-          subtitle={`${participants.length} registros`}
-        />
-        <Card.Content>
-          {participants.length === 0 ? (
-            <Text variant="bodyMedium">Nenhum formando cadastrado ate o momento.</Text>
-          ) : (
-            <List.AccordionGroup
-              expandedId={expanded}
-              onAccordionPress={(id) => setExpanded(id as string | undefined)}
-            >
-              {participants.map((participant) => (
-                <List.Accordion
-                  key={participant.id}
-                  id={participant.id}
-                  title={participant.name}
-                  description={`${formatCurrencyBRL(participant.value)} - Status: ${participant.status}${
-                    participant.whatsapp ? `\nWhatsApp: ${participant.whatsapp}` : ''
-                  }`}
-                  left={(props) => <List.Icon {...props} icon="account" />}
+          <Card style={styles.card}>
+            <Card.Title
+              title="Formandos e pagamentos"
+              subtitle={`${participants.length} registros`}
+            />
+            <Card.Content>
+              {participants.length === 0 ? (
+                <Text variant="bodyMedium">Nenhum formando cadastrado ate o momento.</Text>
+              ) : (
+                <List.AccordionGroup
+                  expandedId={expanded}
+                  onAccordionPress={(id) => setExpanded(id as string | undefined)}
+                >
+                  {participants.map((participant) => (
+                    <List.Accordion
+                      key={participant.id}
+                      id={participant.id}
+                      title={participant.name}
+                      description={`${formatCurrencyBRL(participant.value)} - Status: ${participant.status}${
+                        participant.whatsapp ? `\nWhatsApp: ${participant.whatsapp}` : ''
+                      }`}
+                      left={(props) => <List.Icon {...props} icon="account" />}
+                      right={() => (
+                        <Chip
+                          compact
+                          style={[styles.statusChip, getStatusChipStyle(participant.status)]}
+                          textStyle={styles.statusChipText}
+                        >
+                          {participant.status}
+                        </Chip>
+                      )}
+                    >
+                      <View style={styles.participantMeta}>
+                        <Chip icon="cash" compact style={styles.participantChip}>
+                          Total: {formatCurrencyBRL(participant.value)}
+                        </Chip>
+                        {participant.whatsapp ? (
+                          <Chip icon="whatsapp" compact style={styles.participantChip}>
+                            {participant.whatsapp}
+                          </Chip>
+                        ) : null}
+                      </View>
+                      {participant.history.length === 0 ? (
+                        <Text variant="bodyMedium" style={styles.sectionSpacing}>
+                          Nenhum pagamento registrado para este formando.
+                        </Text>
+                      ) : (
+                        participant.history.map((entry) => (
+                          <View key={entry.id}>
+                            <List.Item
+                              title={`${entry.date} - ${entry.status}`}
+                              description={entry.method ?? 'Metodo nao informado'}
+                              left={(props) => <List.Icon {...props} icon="cash" />}
+                              right={() => (
+                                <Text style={styles.amountText}>{formatCurrencyBRL(entry.amount)}</Text>
+                              )}
+                            />
+                            <Divider />
+                          </View>
+                        ))
+                      )}
+                    </List.Accordion>
+                  ))}
+                </List.AccordionGroup>
+              )}
+            </Card.Content>
+          </Card>
+        </>
+      ) : (
+        <Card style={styles.card}>
+          <Card.Title
+            title="Como esta a turma"
+            subtitle={
+              totalParticipants === 1
+                ? '1 formando acompanhado'
+                : `${totalParticipants} formandos acompanhados`
+            }
+          />
+          <Card.Content>
+            {totalParticipants === 0 ? (
+              <Text variant="bodyMedium">Os dados da turma ainda estao sendo cadastrados.</Text>
+            ) : (
+              statusSummaries.map((summary) => (
+                <List.Item
+                  key={summary.status}
+                  title={summary.label}
+                  description={summary.description}
+                  left={(props) => <List.Icon {...props} icon={summary.icon} />}
                   right={() => (
                     <Chip
                       compact
-                      style={[styles.statusChip, getStatusChipStyle(participant.status)]}
+                      style={[styles.statusChip, getStatusChipStyle(summary.status)]}
                       textStyle={styles.statusChipText}
                     >
-                      {participant.status}
+                      {statusDistribution[summary.status]}
                     </Chip>
                   )}
-                >
-                  <View style={styles.participantMeta}>
-                    <Chip icon="cash" compact style={styles.participantChip}>
-                      Total: {formatCurrencyBRL(participant.value)}
-                    </Chip>
-                    {participant.whatsapp ? (
-                      <Chip icon="whatsapp" compact style={styles.participantChip}>
-                        {participant.whatsapp}
-                      </Chip>
-                    ) : null}
-                  </View>
-                  {participant.history.length === 0 ? (
-                    <Text variant="bodyMedium" style={styles.sectionSpacing}>
-                      Nenhum pagamento registrado para este formando.
-                    </Text>
-                  ) : (
-                    participant.history.map((entry) => (
-                      <View key={entry.id}>
-                        <List.Item
-                          title={`${entry.date} - ${entry.status}`}
-                          description={entry.method ?? 'Metodo nao informado'}
-                          left={(props) => <List.Icon {...props} icon="cash" />}
-                          right={() => (
-                            <Text style={styles.amountText}>{formatCurrencyBRL(entry.amount)}</Text>
-                          )}
-                        />
-                        <Divider />
-                      </View>
-                    ))
-                  )}
-                </List.Accordion>
-              ))}
-            </List.AccordionGroup>
-          )}
-        </Card.Content>
-      </Card>
+                />
+              ))
+            )}
+          </Card.Content>
+        </Card>
+      )}
     </ScrollView>
   );
 };
 
-const PollsTab: React.FC<PollsTabProps> = ({ loading, poll }) => {
+const PollsTab: React.FC<PollsTabProps> = ({ loading, poll, role }) => {
   if (loading && !poll) {
     return (
       <View style={styles.loadingContainer}>
@@ -660,8 +762,12 @@ const PollsTab: React.FC<PollsTabProps> = ({ loading, poll }) => {
     <ScrollView contentContainerStyle={styles.tabContent}>
       <Card style={styles.card}>
         <Card.Title
-          title="Enquete ativa"
-          subtitle={`${poll.totalVotes} votos registrados`}
+          title={role === 'admin' ? 'Enquete ativa' : 'Participe da enquete'}
+          subtitle={
+            role === 'admin'
+              ? `${poll.totalVotes} votos registrados`
+              : 'Ajude a turma escolhendo sua opcao favorita'
+          }
         />
         <Card.Content>
           <Text variant="titleMedium">{poll.question}</Text>
@@ -682,9 +788,15 @@ const PollsTab: React.FC<PollsTabProps> = ({ loading, poll }) => {
               </View>
             );
           })}
-          <Chip icon="calendar" style={styles.chip}>
-            Encerra em {poll.closesAt}
-          </Chip>
+          {role === 'admin' ? (
+            <Chip icon="calendar" style={styles.chip}>
+              Encerra em {poll.closesAt}
+            </Chip>
+          ) : (
+            <Text variant="bodySmall" style={styles.helperText}>
+              Votos sao contabilizados automaticamente ate {poll.closesAt}.
+            </Text>
+          )}
         </Card.Content>
       </Card>
     </ScrollView>
@@ -741,6 +853,9 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: '#F4F6F8',
+  },
+  roleSwitcher: {
+    padding: 16,
   },
   navigationContainer: {
     flex: 1,
